@@ -23,6 +23,7 @@ exports.signOut = async (event) => {
     const command = new GlobalSignOutCommand(params);
 
     await client.send(command);
+
     return {
       statusCode: 200,
       body: JSON.stringify({

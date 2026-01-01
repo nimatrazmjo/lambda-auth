@@ -1,69 +1,146 @@
-<!--
-title: 'AWS Simple HTTP Endpoint example in NodeJS'
-description: 'This template demonstrates how to make a simple HTTP API with Node.js running on AWS Lambda and API Gateway using the Serverless Framework.'
-layout: Doc
-framework: v4
-platform: AWS
-language: nodeJS
-authorLink: 'https://github.com/serverless'
-authorName: 'Serverless, Inc.'
-authorAvatar: 'https://avatars1.githubusercontent.com/u/13742415?s=200&v=4'
--->
+# Auth Service (AWS Serverless)
 
-# Serverless Framework Node HTTP API on AWS
+This project exposes a lightweight authentication API on AWS Lambda using the Serverless Framework v4. Each HTTP endpoint proxies an AWS Cognito user pool workflow (sign-up, confirmation, sign-in, and global sign-out) and records basic profile metadata inside a DynamoDB `Users` table for auditing purposes.
 
-This template demonstrates how to make a simple HTTP API with Node.js running on AWS Lambda and API Gateway using the Serverless Framework.
+## Key Features
+- **Cognito user flows** – wraps sign-up + confirmation, token-based sign-in, and global sign-out using the AWS SDK for JavaScript (v3).
+- **DynamoDB persistence** – stores a generated `userId`, email address, full name, location placeholders, and timestamps whenever a user signs up (`models/userModel.js`).
+- **Infrastructure as code** – `serverless.yml` provisions the Lambda functions, HTTP API routes, IAM permissions, and the backing DynamoDB table.
+- **Ready for CI/CD** – deploy the entire stack with a single `serverless deploy` and tear it down with `serverless remove`.
 
-This template does not include any kind of persistence (database). For more advanced examples, check out the [serverless/examples repository](https://github.com/serverless/examples/) which includes Typescript, Mongo, DynamoDB and other examples.
+## Architecture
+| Component | Description |
+| --- | --- |
+| API Gateway (HTTP API) | Provides REST-style endpoints such as `/sign-up`, `/login`, etc. (`serverless.yml`). |
+| AWS Lambda (Node.js 24) | Runs the handlers in `handlers/` and `handler.js`. |
+| Amazon Cognito | Manages the user pool, verification codes, and tokens. The Cognito App Client ID is injected via `CLIENT_ID`. |
+| Amazon DynamoDB | `Users` table stores metadata per registration via `models/userModel.js`. |
+| AWS Systems Manager Parameter Store | Stores `/CLIENT_ID`, keeping secrets out of source control. |
 
-## Usage
+## Prerequisites
+- Node.js 18+ and npm (runtime for Serverless CLI and local tooling).
+- [Serverless Framework CLI](https://www.serverless.com/framework/docs/getting-started) v4 (`npm install -g serverless`).
+- AWS CLI configured with credentials that can manage Cognito, Lambda, API Gateway, DynamoDB, and SSM in the target region.
+- An existing Cognito User Pool and App Client whose ID will be provided to this service.
 
-### Deployment
+## Installation & Setup
+1. **Install dependencies** inside the repo root:
+   ```bash
+   npm init -y # if package.json does not yet exist
+   npm install @aws-sdk/client-cognito-identity-provider @aws-sdk/client-dynamodb serverless
+   ```
+2. **Set required environment variables** for local commands:
+   ```bash
+   export AWS_REGION=us-east-1
+   export REGION=us-east-1 # picked up by the handlers and DynamoDB client
+   ```
+3. **Store the Cognito App Client ID** in Parameter Store so `serverless.yml` can inject it at deploy time:
+   ```bash
+   aws ssm put-parameter \
+     --name /CLIENT_ID \
+     --value <your_app_client_id> \
+     --type SecureString \
+     --overwrite
+   ```
+4. **(Optional) Create the DynamoDB table ahead of time.** The stack already defines `Users`, so manual creation is only needed when testing outside of CloudFormation.
 
-In order to deploy the example, you need to run the following command:
+## Local Development
+- `serverless dev` – spins up a local development loop that forwards HTTP calls through the deployed Lambda so you can iterate quickly.
+- Alternatively, run unit tests or invoke handlers directly with `serverless invoke local -f signup --data '{"email":"","fullName":"","password":""}'`.
 
+Ensure the following environment variables are present when invoking locally:
+- `REGION` – the AWS region that holds your Cognito pool and DynamoDB table.
+- `CLIENT_ID` – Cognito App Client ID (can be exported manually when running locally).
+
+## Deployment
+```bash
+serverless deploy --stage dev
 ```
-serverless deploy
+Deployment will:
+- Provision/Update the HTTP API endpoints listed below.
+- Create or update the IAM role granting `dynamodb:PutItem` on the `Users` table.
+- Create the `Users` DynamoDB table if it does not exist.
+
+Tear down everything with:
+```bash
+serverless remove --stage dev
 ```
 
-After running deploy, you should see output similar to:
+## API Reference
+| Method & Path | Handler | Description |
+| --- | --- | --- |
+| `GET /` | `handler.hello` | Health-check endpoint returning the default Serverless message. |
+| `POST /sign-up` | `handlers/signUp.signUp` | Creates a Cognito user and persists metadata into DynamoDB. |
+| `POST /confirm` | `handlers/confirmSignUp.confirmSignUp` | Confirms a user with the verification code emailed by Cognito. |
+| `POST /login` | `handlers/signIn.signin` | Initiates the USER_PASSWORD_AUTH flow and returns Cognito tokens. |
+| `POST /signout` | `handlers/signOut.signOut` | Performs a global sign-out for the supplied access token. |
 
-```
-Deploying "serverless-http-api" to stage "dev" (us-east-1)
-
-✔ Service deployed to stack serverless-http-api-dev (91s)
-
-endpoint: GET - https://xxxxxxxxxx.execute-api.us-east-1.amazonaws.com/
-functions:
-  hello: serverless-http-api-dev-hello (1.6 kB)
-```
-
-_Note_: In current form, after deployment, your API is public and can be invoked by anyone. For production deployments, you might want to configure an authorizer. For details on how to do that, refer to [HTTP API (API Gateway V2) event docs](https://www.serverless.com/framework/docs/providers/aws/events/http-api).
-
-### Invocation
-
-After successful deployment, you can call the created application via HTTP:
-
-```
-curl https://xxxxxxx.execute-api.us-east-1.amazonaws.com/
-```
-
-Which should result in response similar to:
-
+### Payloads & Responses
+`POST /sign-up`
 ```json
-{ "message": "Go Serverless v4! Your function executed successfully!" }
+{
+  "email": "me@example.com",
+  "fullName": "Jane Doe",
+  "password": "Sup3rSecure!"
+}
+```
+Successful response:
+```json
+{ "msg": "User successfully signed up!" }
 ```
 
-### Local development
-
-The easiest way to develop and test your function is to use the `dev` command:
-
+`POST /confirm`
+```json
+{
+  "email": "me@example.com",
+  "code": "123456"
+}
 ```
-serverless dev
+
+`POST /login`
+```json
+{
+  "email": "me@example.com",
+  "password": "Sup3rSecure!"
+}
+```
+Response contains the raw `AuthenticationResult` from Cognito:
+```json
+{
+  "message": "User successfully signed in!",
+  "token": {
+    "AccessToken": "...",
+    "IdToken": "...",
+    "RefreshToken": "...",
+    "ExpiresIn": 3600,
+    "TokenType": "Bearer"
+  }
+}
 ```
 
-This will start a local emulator of AWS Lambda and tunnel your requests to and from AWS Lambda, allowing you to interact with your function as if it were running in the cloud.
+`POST /signout`
+```json
+{
+  "token": "<AccessToken from /login>"
+}
+```
 
-Now you can invoke the function as before, but this time the function will be executed locally. Now you can develop your function locally, invoke it, and see the results immediately without having to re-deploy.
+## Data Model
+The `Users` DynamoDB table (`models/userModel.js`) stores:
+- `userId` *(PK, string)* – generated via `crypto.randomUUID()`.
+- `email` *(string)* – Cognito username.
+- `fullName` *(string)*.
+- `state`, `city`, `locality` *(string placeholders)* – reserved for future profile enrichment.
+- `createdAt` *(ISO string)* – server timestamp at sign-up.
 
-When you are done developing, don't forget to run `serverless deploy` to deploy the function to the cloud.
+## Troubleshooting
+- **`CLIENT_ID` not set** – ensure the SSM parameter exists in the same region and that your deploy IAM role can read it.
+- **`NotAuthorizedException` during `/login`** – confirm the user is verified and credentials are correct.
+- **`ResourceNotFoundException` for DynamoDB** – run `serverless deploy` so CloudFormation can create the `Users` table, or create it manually with the same primary key (`userId` as HASH).
+- **Different regions** – all resources (Cognito, DynamoDB, SSM) must live in `REGION`; mismatched regions manifest as `UserPool does not exist` errors.
+
+## Next Steps
+- Add validation/authorization (API keys, Cognito authorizers, etc.).
+- Extend `UserModel` to persist user attributes beyond name/email.
+- Add automated tests for each handler.
+
