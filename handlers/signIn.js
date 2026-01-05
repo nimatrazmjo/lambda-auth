@@ -33,8 +33,10 @@ exports.signin = async (event) => {
     return {
       statusCode: 200,
       body: JSON.stringify({
-        message: "User successfully signed in!",
-        token: response.AuthenticationResult,
+        accessToken: response.AuthenticationResult.AccessToken,
+        idToken: response.AuthenticationResult.IdToken,
+        refreshToken: response.AuthenticationResult.RefreshToken,
+        message: "sign-in successful",
       }),
     };
   } catch (error) {
